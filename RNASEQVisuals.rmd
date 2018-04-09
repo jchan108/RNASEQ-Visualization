@@ -1,0 +1,962 @@
+---
+title: "Data Visualization"
+author: "Joshua Chang"
+date: "November 2017"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+
+These packages need to be installed.
+```{r, ccho = FALSE}
+#install.packages("ggthemes")
+#install.packages("gplots")
+#install.packages("viridis")
+#install.packages("readxl") #helps to read in xlxs files
+#install.packages("ggsubplot")
+#install.packages("RColorBrewer") #colors
+#install.packages("heatmap.plus")
+#install.packages("pheatmap")
+#install.packages("Hmisc")
+#install.packages("rlang")
+#install.packages("ggpubr")
+#install.packages("forcats")
+#install.packages("colorspace")
+#install.packages("ggplot2")
+#install.packages("dplyr")
+#install.packages("tidyr")
+```
+
+
+```{r, message = F, warning = F}
+library(pheatmap) #pretty heat maps
+library(gplots) #for heatmap2
+library(ggplot2) #create graphs
+library(viridis) #color schemes
+library(forcats) #fct_inorder
+library(readr) #read in files
+library(RColorBrewer) # colors
+library(readxl) #read in excel
+library(tidyr) # tidy up dataframe
+library(dplyr) #joining multiple dataframes together
+library(tidyverse)
+library(ggthemes) #adds plot themes
+library(scales) 
+library(heatmap.plus)
+library(Hmisc)
+library(ggpubr)
+library(rlang)
+library(colorspace)
+library(dendextend)
+library(grid)
+```
+
+```{r, echo = FALSE, message = F, warning = F}
+#Set working directory to where data file is
+setwd("C:/Users/joshua/Documents")
+genders = read_excel("Genderdataset.xlsx")
+
+#Applying the log2(x+1) transformation onto RPKM data entries
+genders.log = genders
+genders.log[,6:20] = log2(genders[6:20]+1) #6:20 contains RPKM entries
+
+```
+
+
+```{r, echo = FALSE, warning = F}
+#pick data that contains miRNA, note that type can have multiple fields, so use grepl to search for string entries
+hasmiRNA = filter(genders.log, grepl('miRNA',type) )
+
+```
+
+
+
+Scatterplots
+
+This is a scatterplot that compares  
+  
+log2(f/m)e14 and log2(f/m)e12
+
+log2f - log2m of e14 on y axis and log2f - log2m of e12 on x axis
+
+  
+```{r,message = F, warning = F}
+#filter out dataset to only include the 6 genes with highest recorded counts
+top6target = c("antisense","lincRNA","miRNA","processed_pseudogene","protein_coding","TEC")
+top6type = filter(genders.log, type %in% top6target) #Filters to contain only types specified in top6target
+
+#we use the mutate function to create new columns calculated from old columns
+mfgenders = mutate(top6type, e12mf = e12f - e12m ) #log(f/m) embryonic day 12
+mfgenders = mutate(mfgenders, e14mf = e14f - e14m) #log(f/m) embryonic day 14
+
+#find linear regression line equation.
+x = mfgenders$e12mf
+model = lm(formula = mfgenders$e14mf~x)
+#shaded lines horizontally should be 0.7368584x + 1 and 0.7368584x - 1
+test = as.data.frame(summary(model)$coefficients)
+m = test$Estimate[2] #access our slope of regression line
+  
+
+#Create base plot and assign non significant colour boundary
+col = c("not significant" = "black","antisense" = "blue2","lincRNA" = "khaki1","miRNA" = "green2","processed_pseudogene" = "red","protein_coding" = "cyan2","TEC" = "magenta1")
+
+g = ggplot(data = mfgenders) +
+  geom_point(aes(x = e12mf, y = e14mf, colour = ifelse(e14mf < e12mf*m + .75 & e14mf > e12mf*m - .75, "not significant",type))) +
+  #geom ribbon adds the shaded regions
+  geom_ribbon(aes(x = e12mf,ymin = e12mf*m - .75, ymax = e12mf*m + .75), fill = "darkgray", alpha = 0.7) +
+  #adds the legend name and colors
+  scale_colour_manual(name = "Gene Type",  values = col) 
+
+#Adjust graph and axis scaling  ----------------------------------------------------------------------------------------------------------
+  g = g + scale_x_continuous(limits = c(-6,6), breaks = seq(-6,6, by = 2)) + #limits defines boundaries of grid, breaks defines boundary of grid labels
+  scale_y_continuous(limits = c(-6,6), breaks = seq(-6,6, by = 2))  +
+  theme_classic() + #Add theme
+  theme(aspect.ratio=1) #forces plot to be square instead of rectangle shape
+
+#Axis Titles   -------------------------------------------------------------------------------------------------------------
+  g = g + 
+  labs(title="Log2(f/m) values plotted by Embryonic Days ", y = "F/M Embryonic Day 14 values", x = "F/M Embryonic Day 12 values") +
+  theme(plot.title=element_text(size=16, #Customize text of the Title
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4), 
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9))
+
+  #draw the lines to illustrate boundary for non significant
+  g = g + geom_abline(slope = m, intercept = .75, col = "black", linetype = "solid") +
+  geom_abline(slope = m, intercept = -.75, col = "black", linetype = "solid") 
+  
+  g
+
+```
+
+
+Emperical CDF
+
+```{r,message = F, warning = F, echo = F}
+#The emperical CDF gives the P(X<x) in our generated sample (not to be confused with CDF, which gives P(X<x) of the population)
+
+#Make our base plot
+#geom = "step" give stepwise ecdf.
+ggplot(genders.log, aes(e12m)) + 
+  stat_ecdf(geom = "step") + #geom = "point" to display points, no steps. 
+ scale_x_continuous(limits = c(0,12), breaks = seq(0,12, by = 2), expand = c(0,0)) + #limits defines boundaries of grid, breaks defines boundary of grid labels
+ theme_classic() + 
+  theme(axis.line = element_line(colour = "black") ) +
+#Axis Font, Labeling, and Centering -------------------------------------------------------------------
+  labs(title="Empirical Cumulative Density Function ", y = "F(RPKM) ", x = "M Embryonic Day 12 log2 RPKM") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+            #plot.subtitle=element_text(size=8, hjust = 0), 
+            #                           family="American Typewriter",
+            #                           face="bold",
+            #                           hjust=0.5),  # subtitle
+            #plot.caption=element_text(size=8, line = 2),  # caption
+        
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+
+
+```
+
+Here is an example of constructing/comparing multiple ECDF on one plot
+
+```{r,message = F, warning = F, echo = F}
+
+snmitarget = c("miRNA","snRNA")
+snmiRNA = filter(genders.log, type %in% snmitarget) #Filters to contain only types specified in bptarget
+
+
+ggplot(snmiRNA,aes(e12m,color = type)) +
+  stat_ecdf(geom = "step") +  
+  scale_colour_manual(name = "Gene Type",values = c("red","dodgerblue3")) + 
+#can set pad = FALSE to remove positive & negative infinity
+ scale_x_continuous(limits = c(0,12), breaks = seq(0,12, by = 2), expand = c(0,0)) + #limits defines boundaries of grid, breaks defines boundary of grid labels
+ theme_classic() +
+    theme(axis.line = element_line(colour = "black") ) +
+
+#Axis Font, Labeling, and Centering -------------------------------------------------------------------
+  labs(title="Empirical Cumulative Density Function ", y = "F(RPKM) ", x = "M Embryonic Day 12 log2 RPKM") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+            #plot.subtitle=element_text(size=8, hjust = 0), 
+            #                           family="American Typewriter",
+            #                           face="bold",
+            #                           hjust=0.5),  # subtitle
+            #plot.caption=element_text(size=8, line = 2),  # caption
+        
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+ 
+
+
+```
+
+
+
+This is a scatterplot that compares the log2 RPKM values of genes between male and female populations. Points are colored if their fold change is significant, i.e. |log2(y_i)-log2(x_i)| > 1
+
+I am claiming that the initial value is the E12M value, final value is E12f value.
+
+Fold Change is defined as E12F/E12M.
+
+
+```{r,message = F, warning = F, echo = F}
+g = ggplot(data = hasmiRNA) +
+  geom_point(alpha = 1, aes(x=e12m,y=e12f, 
+                            colour = ifelse(e12f-e12m >1,"up regulated",
+                                     ifelse(e12f-e12m < -1,"down regulated","no change")
+                                       ))) +
+  
+  scale_colour_manual(name = "Log2 fold change", values = c("down regulated" = "red","no change" = "lightgray", "up regulated" = "dodgerblue4")) + 
+ scale_x_continuous(limits = c(0,10.5), breaks = seq(0,10, by = 2), expand = c(0,0)) + #limits defines boundaries of grid, breaks defines boundary of grid labels
+  scale_y_continuous(limits = c(0,10.5), breaks = seq(0,10, by = 2), expand = c(0,0)) + #expand sets x / y (0,0) coord to bottom left
+theme_classic()  + #Add theme
+  theme(aspect.ratio=1) #forces plot to be square instead of rectangle shape
+ #Axis Titles   --------------------------------------------------------------------
+  g = g + 
+  labs(title="Distribution of miRNA type genes ", y = "F Embryonic Day 12 log2 RPKM ", x = "M Embryonic Day 12 log2 RPKM") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+ 
+g = g + geom_abline(slope = 1, intercept = 1, linetype = "dashed", col = "dodgerblue4") +
+  geom_abline(slope = 1, intercept = -1, col = "red", linetype = "dashed") 
+
+g
+  
+```
+
+
+```{r,message = F, warning = F, echo = F}
+
+#Assign labeling ----------------------------------------------------------------------------------
+g = ggplot(data = hasmiRNA) + #we use nested if else statements to create the boundaries on the graph.
+  geom_point(alpha = 1, aes(x=e12m,y=e12f,
+                       colour = ifelse(e12f-e12m >2,"up regulated (f-m>2)",
+                                          ifelse(e12f-e12m < -2,"down regulated (f-m<-2)",
+                                                 ifelse(e12f-e12m > 1,"up regulated (f-m>1)",
+                                                      ifelse(e12f-e12m < -1,"down regulated (f-m<-1)",
+                                                            "no change") )))        ))  #all other points will be colored black
+                                                                                
+  
+  #Associate colors with labels ----------------------------------------------------------------------------------------------
+
+#define the colors we want and label to assign to.
+col = values = c("down regulated (f-m<-2)" = "red", "down regulated (f-m<-1)" = "orange1", "no change" = "lightgray", "up regulated (f-m>1)" = "lightskyblue", "up regulated (f-m>2)" = "dodgerblue4")
+
+g = g + scale_colour_manual(name = "Log2 fold change", 
+              values = col ) +
+ # scale_color_brewer(palette = "Spectral") + #if you want to use colorbrewer colors instead, comment out values
+  scale_x_continuous(limits = c(0,10.5), breaks = seq(0,10, by = 2), expand = c(0,0)) + #limits defines boundaries of grid, breaks defines boundary of grid labels
+  scale_y_continuous(limits = c(0,10.5), breaks = seq(0,10, by = 2), expand = c(0,0)) + #expand sets the graph origin to bottom left.
+ theme_classic() +#creates the white background + grid lines #Add theme
+  theme(aspect.ratio=1) #forces plot to be square instead of rectangle shape
+ #Axis Titles   -------------------------------------------------------------------------------------------------------------
+  g = g + 
+  labs(title="Distribution of miRNA type genes ", y = "F Embryonic Day 12 log2 RPKM ", x = "M Embryonic Day 12 log2 RPKM") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+        
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+ 
+#Create colored regionl ines.
+g = g + geom_abline(slope = 1, intercept = 1, linetype = "dashed", col = "skyblue3") +
+  geom_abline(slope = 1, intercept = 2, linetype = "dashed", col = "dodgerblue4") + 
+  geom_abline(slope = 1, intercept = -1, linetype = "dashed", col = "darkorange1") + 
+  geom_abline(slope = 1, intercept = -2, linetype = "dashed", col = "red")
+
+g
+
+
+```
+
+
+Here is a visual of the data that will be used to generate our stacked bar charts in the next step.
+
+```{r,echo = FALSE,message = F, warning = F}
+
+#Data Preprocessing --------------------------------------------------------------------------------------------------------
+#This splits up genes that are classified as multiple types, splitting the gene into one row for each type that gene has.
+ onetgenders = filter(genders.log,!grepl(',',type))
+
+
+#Create base graph -----------------------------------------------------------------------------------------------------------
+g3 = ggplot(data = onetgenders) +
+  geom_point(alpha = 1, aes(x=e12m,y=e12f, colour = ifelse(e12f-e12m >1,"up regulated",
+                                                           ifelse(e12f-e12m < -1,"down regulated","no change")
+                                                           )
+                            )) 
+  
+#Add colors & Adjust scaling --------------------------------------
+  col = c("down regulated" = "red","no change" = "lightgray", "up regulated" = "dodgerblue4")
+
+  g3 = g3 + scale_colour_manual(name = "Log2 fold change",
+                      values = col) + 
+ scale_x_continuous(limits = c(0,10.5), breaks = seq(0,10, by = 2), expand = c(0,0)) +
+  #limits defines boundaries of grid, breaks defines boundary of grid labels
+  scale_y_continuous(limits = c(0,10.5), breaks = seq(0,10, by = 2), expand = c(0,0)) + 
+  #expand sets x / y (0,0) coord to bottom left
+theme_classic() + #Add theme
+  theme(aspect.ratio=1) #forces plot to be square instead of rectangle shape
+
+ #Axis Titles   --------------------------------------------------------------------
+  g3 = g3 + 
+  labs(title="Distribution of Embryonic Day 12 Genes", subtitle = "Single Gene Type", 
+       y = "F Embryonic Day 12 log2 RPKM ", x = "M Embryonic Day 12 log2 RPKM") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+        plot.subtitle = element_text(family = "sans", hjust = 1, face = "italic"), #subtitle
+    
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+ 
+g3 = g3 + geom_abline(slope = 1, intercept = 1, linetype = "dashed", col = "dodgerblue4") +
+  geom_abline(slope = 1, intercept = -1, col = "red", linetype = "dashed") 
+
+g3
+```
+
+
+These are the steps to make a stacked  bar chart that illustrates fold change distribution per gene type on Embryonic Day 12 between females and males.
+
+```{r,message = F, warning = F, echo = F}
+#Create new columns to represent log2(f/m) fold change
+onetgenders = mutate(onetgenders,e12fm = e12f-e12m)
+
+#Create 3 dataframes for each day that consist of only dr/ur/nc genes for each day
+onetgendersDR12 = filter(onetgenders, e12fm <= -1)
+onetgendersUR12 = filter(onetgenders,e12fm >= 1)
+onetgendersNC12 = filter(onetgenders,e12fm < 1 && e12fm > -1)
+
+#Find the count of how many of each genes are up/down regulated
+DR12 = count(onetgendersDR12,type) #from dplyr package, generates down regulatedcounts of each type variable
+DR12 = rename(DR12,"dr" = "n")
+UR12 = count(onetgendersUR12,type) #find up regulated counts of each type variable
+UR12 = rename(UR12,"ur" = "n")
+NC12 = count(onetgendersNC12,type)
+NC12 = rename(NC12, "nc" = "n")
+
+#use dplyr functions to match each type's counts.
+count12 = left_join(NC12,DR12)
+count12 = left_join(count12,UR12)
+count12[is.na(count12)] = 0 #these joins cause NA, change all NA to 0.
+
+smallcount12 = filter(count12, nc + dr + ur < 60)
+medcount12 = filter(count12, nc + dr + ur >= 60 & nc + dr + ur < 600)
+largecount12 = filter(count12, nc + dr + ur >= 600 )
+
+#data is finally in proper stacked bar chart format
+smallgathertypes = gather(smallcount12, "foldchange","counts",2:4) 
+medgathertypes = gather(medcount12, "foldchange","counts",2:4) 
+largegathertypes = gather(largecount12, "foldchange","counts",2:4) 
+```
+
+
+```{r,message = F, warning = F, echo = F}
+
+ggplot(smallgathertypes, aes(x = factor(type), y = counts, fill = foldchange)) +
+   geom_bar(position = position_stack(), stat = "identity", width = .7) +
+   scale_fill_manual( name = "fold change", values = c("dr" = "red3","nc" = "darkolivegreen2","ur" = "dodgerblue1")) +
+   #geom_text(aes(label = paste0(percentage,"%")), size = 2) + #if you want to add percentage, need make % column.
+   coord_flip() +
+   theme_few() +
+   #change axis scaling -------------------------------------------------------------------------------------
+    scale_y_continuous(limits = c(0,60), breaks = seq(0,60, by = 15)) + #limits defines boundaries of grid, breaks defines boundary of grid labels
+  
+   #Axis Titles   --------------------------------------------------------------------
+  labs(title="Day 12 F/M Fold Change Distribution by Gene", subtitle = "Small Gene Counts", x = "Gene type", y = "Recorded Gene Count") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+        plot.subtitle = element_text(family = "sans", hjust = 1, face = "italic"), #subtitle
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+ 
+
+```
+
+```{r, echo = FALSE,message = F, warning = F}
+ggplot(medgathertypes, aes(x = factor(type), y = counts, fill = foldchange)) +
+   geom_bar(position = position_stack(), stat = "identity", width = .7) +
+   scale_fill_manual( name = "fold change", values = c("dr" = "red3","nc" = "darkolivegreen2","ur" = "dodgerblue1")) +
+   #geom_text(aes(label = paste0(percentage,"%")), size = 2) + #if you want to add percentage, need make % column.
+   coord_flip() +
+   theme_few() +
+   #change axis scaling -------------------------------------------------------------------------------------
+    scale_y_continuous(limits = c(0,600), breaks = seq(0,600, by = 150)) + #limits defines boundaries of grid, breaks defines boundary of grid labels
+  
+   #Axis Titles   --------------------------------------------------------------------
+  labs(title="Day 12 F/M Fold Change Distribution by Gene", subtitle = "Medium Gene Counts", x = "Gene type", y = "Recorded Gene Count") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+            plot.subtitle = element_text(family = "sans", hjust = 1, face = "italic"), #subtitle
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+```
+
+```{r, echo = FALSE,message = F, warning = F}
+ggplot(largegathertypes, aes(x = factor(type), y = counts, fill = foldchange)) +
+   geom_bar(position = position_stack(), stat = "identity", width = .7) +
+   scale_fill_manual( name = "fold change", values = c("dr" = "red3","nc" = "darkolivegreen2","ur" = "dodgerblue1")) +
+   #geom_text(aes(label = paste0(percentage,"%")), size = 2) + #if you want to add percentage, need make % column.
+   coord_flip() +
+   theme_few() +
+   #change axis scaling -------------------------------------------------------------------------------------
+
+   #Axis Titles   --------------------------------------------------------------------
+  labs(title="Day 12 Fold Change Distribution by Gene", subtitle = "Large Gene Counts", x = "Gene type", y = "Recorded Gene Count") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+                  plot.subtitle = element_text(family = "sans", hjust = 1, face = "italic"), #subtitle
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+
+```
+
+Histogram
+
+```{r, warning = F}
+a = filter(onetgenders, type %in% c('unprocessed_pseudogene','miRNA','antisense'))
+ggplot(a,aes(x=e12m, fill = type)) +
+  #default position is stack. set to identity to have overlayed histograms
+  geom_histogram(bins = 12, position = "stack") +
+#bins sets number of bars in histogram.
+ scale_x_continuous(limits = c(-.3,4), breaks = seq(0,4, by = 1))+
+#limits defines boundaries of grid, breaks defines boundary of grid labels
+ theme_few()+
+ #Change color ------------------------------------
+ scale_fill_manual(name = "gene type", values = c("salmon","lightgoldenrod","darkturquoise"))  +
+
+labs(title="Male RPKM values on Embryonic Day 12 ", x = "RPKM value", y = "Count") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+                  plot.subtitle = element_text(family = "sans", hjust = 1, face = "italic"), #subtitle
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+```
+
+
+```{r, echo = FALSE, warning = FALSE}
+
+pies = filter(smallgathertypes,type == "Mt_tRNA")
+
+
+
+ggplot(a,aes(x=e12m, fill = type)) +
+  #default position is stack. identity splits it into 3
+  geom_histogram(bins = 14, alpha = 0.5, position = "identity") +
+  theme_classic() +
+   scale_x_continuous(limits = c(-.3,4), breaks = seq(0,4, by = 1))+
+#limits defines boundaries of grid, breaks defines boundary of grid labels
+ theme_few()+
+ #Change color ------------------------------------
+ scale_fill_manual(name = "gene type", values = c("firebrick1","yellow1","royalblue2"))  +
+
+labs(title="Male RPKM values on Embryonic Day 12 ", x = "RPKM value", y = "Count") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+                  plot.subtitle = element_text(family = "sans", hjust = 1, face = "italic"), #subtitle
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+```
+
+This bargraph compares the mean log2 RPKM values between genes of type miRNA, snRNA, and lincRNA, tested in three different population groups.
+
+```{r, echo = FALSE,message = F, warning = F}
+
+#This splits up genes that are classified as multiple types, splitting the gene into one row for each type that gene has. Makes it easier for data visualization.
+ genders2 = genders.log %>% 
+    mutate(type = strsplit(as.character(type), ",")) %>% 
+    unnest(type)
+
+#this filters dataset to only contain genes of these types.
+target = c("miRNA","snRNA","lincRNA")
+#target = c("lincRNA","processed_pseudogene","nonsense_mediated_decay")
+
+genders2 = filter(genders2, type %in% target)
+#breaks dataset down into only important columns. Easier to use barchart.
+genders2 = select(genders2,e12f,e14f,e17f,e12f2,e14f2,e17f2,e12m,e14m,e17m,type)
+
+
+  #transform dataframe 
+  data = genders2 %>% 
+  group_by(type=factor(type)) %>%
+  summarise_each(funs(mean,sd)) %>%
+  gather(Var, Val, -type)
+
+  datasd = data[grep("sd",data$Var),]
+  datamn = data[grep("mean",data$Var),]
+  
+  datamn = cbind(datamn,datasd$Val)
+  colnames(datamn) = c("type","Var","mean","sd") 
+  datamn$Var = gsub("_mean","",datamn$Var)
+  xd = rep(c('female','female replicate', 'male'), times = c(9,9,9))
+  
+  datamn = cbind(datamn,xd)
+  #datamn
+  
+  #Base Plot-------------------------------------------------------------------------
+  gg = datamn %>%
+  ggplot(., aes(x=fct_inorder(Var), y=mean, fill=type))+
+  geom_bar(stat='identity', position='dodge', width = .8)  
+
+  gg = gg + scale_fill_manual(values=c("orangered", "palegreen3", "skyblue3")) #brewer
+  #gg = gg + scale_fill_brewer(palette = "Set2") #brewer
+
+  #Axis Titles   --------------------------------------------------------------------
+  gg = gg + #aes(x = fct_inorder(Var)) +
+  labs(title="Comparison of mean RPKM values between genders", y = "mean log2 RPKM", x = "Embryonic days")+
+  scale_x_discrete(labels = c(12,14,17)) +
+  theme_classic() + #background 
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=11, angle = 0 ,vjust=.4, face = "bold"),  # X axis text
+            axis.text.y=element_text(size=11, face = "bold")) 
+ 
+  
+  #Legend adjustment ------------------------------------------------------------------
+  gg = gg + theme(legend.title=element_blank()) #+ # remove legend title
+ # scale_y_continuous(expand = c(0, 0), limits = c(0,.25)) #move y axis scale back to origin, 0-2 y scale
+ 
+#Seperate into groups --------------------------------------------------------
+  gg = gg + facet_grid(~xd,scales = 'free') + 
+       theme(strip.text.x = element_text(size = 9, colour = "black", angle = 0))#output
+  gg
+```
+
+Same bargraph as above except with error lines.
+
+```{r,message = F, warning = F, echo = F}
+#Error Bars -----------------------------------------------------------------------
+  
+#This splits up genes that are classified as multiple types, splitting the gene into one row for each type that gene has. Makes it easier for data visualization.
+ genders2 = genders.log %>% 
+    mutate(type = strsplit(as.character(type), ",")) %>% 
+    unnest(type)
+
+#this filters dataset to only contain genes of these types.
+target = c("miRNA","snRNA","lincRNA")
+
+genders2 = filter(genders2, type %in% target)
+#breaks dataset down into only important columns. Easier to use barchart.
+genders2 = select(genders2,e12f,e14f,e17f,e12f2,e14f2,e17f2,e12m,e14m,e17m,type)
+
+  #transform dataframe 
+  data = genders2 %>% 
+  group_by(type=factor(type)) %>%
+  summarise_each(funs(mean,sd)) %>%
+  gather(Var, Val, -type)
+
+  datasd = data[grep("sd",data$Var),]
+  datamn = data[grep("mean",data$Var),]
+  
+  datamn = cbind(datamn,datasd$Val)
+  colnames(datamn) = c("type","Var","mean","sd") 
+  datamn$Var = gsub("_mean","",datamn$Var)
+  xd = rep(c('female','female replicate', 'male'), times = c(9,9,9))
+  
+  datamn = cbind(datamn,xd)
+
+  #Base Plot-------------------------------------------------------------------------
+  gg = datamn %>%
+  ggplot(., aes(x=fct_inorder(Var), y=mean, fill=type))+
+  geom_bar(stat='identity', position='dodge', width = .8)  
+  #Error lines
+  gg = gg + geom_errorbar(aes(ymin=mean, ymax=mean+sd), size = .3, width=.2,   position=position_dodge(.9))   
+  gg = gg + #aes(x = fct_inorder(Var)) +
+  labs(title="Comparison of mean RPKM values between genders", y = "mean log2 RPKM", x = "Embryonic days")+
+  scale_x_discrete(labels = c(12,14,17)) +
+  theme_classic() + #background 
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=11, angle = 0 ,vjust=.4, face = "bold"),  # X axis text
+            axis.text.y=element_text(size=11, face = "bold")) 
+ #Legend adjustment ------------------------------------------------------------------
+  gg = gg + theme(legend.title=element_blank())
+ #colors --------------------------------------------------------------------
+  gg = gg + scale_fill_viridis(option = "plasma", discrete = TRUE)
+
+  #Seperate into groups --------------------------------------------------------
+  gg = gg + facet_grid(~xd,scales = 'free') + 
+       theme(strip.text.x = element_text(size = 9, colour = "black", angle = 0))#output
+  gg
+```
+
+
+Pie Chart
+
+Pie Chart that illustrates the fold change in Mt_tRNA type genes
+
+```{r, warning = F}
+
+pies = filter(smallgathertypes,type == "Mt_tRNA")
+#(,1) specifies round to tenth decimal
+piepercent = round(pies$counts*100/sum(pies$counts),1)
+pielabels = c("no change (", "down regulated (", "up regulated (")
+percent = c("%)","%)","%)")
+
+format = paste(pielabels,piepercent, percent, sep = "")
+
+#cex is font size, labels is the text that is shown
+pie(pies$counts,labels = format, main = "Mt_tRNA Fold Change Distribution", col = c("darkolivegreen2", "red3","dodgerblue1"), cex = 0.9)
+
+```
+
+Line graph
+
+Simple line graph depicting e12mf on x axis and e14mf on y axis
+
+```{r, warning = F}
+gglinegraph = ggplot(mfgenders, aes(x = e12mf, y = e14mf)) + #base ggplot
+  #in geom_line, can adjust colour, linetype, and size.
+  geom_line(aes(group = 1)) #adds the line graph
+  #can add points to graph, and can customize points
+  #geom_point(colour = "color", size = 3, shape = 21, fill = "white")
+
+gglinegraph = gglinegraph + 
+ scale_x_continuous(limits = c(-6,6), breaks = seq(-6,6, by = 2)) + #limits defines boundaries of grid, breaks defines boundary of grid labels
+  scale_y_continuous(limits = c(-4.5,6), breaks = seq(-4,6, by = 2))  +
+  theme_classic() + #Add theme
+  
+#Axis Titles   -------------------------------------------------------------------------------------------------------------
+  labs(title="Log2(f/m) values on embryonic days 12 and 14 ", y = "F/M Embryonic Day 14 values", x = "F/M Embryonic Day 12 values") +
+  theme(plot.title=element_text(size=16, #Customize text of the Title
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4), 
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9))
+
+
+gglinegraph
+
+
+```
+
+
+
+Box and Whisker Plot
+
+```{r, echo = F}
+#Used in boxplot ---------------------------------------------------------------------------
+
+bptarget = c("miRNA","snRNA","lincRNA","snoRNA","miscRNA")
+sigloge12m = subset(genders, e12m > 1)
+sigloge12m[,6:20] = log2(sigloge12m[6:20]+1)
+
+bpRNA = filter(sigloge12m, type %in% bptarget) #Filters to contain only types specified in bptarget
+```
+
+```{r, echo = F, message = F, warning = F}
+
+#Function ------------------------------------------------------------------------------------------
+makeboxplot = function(data,a,b) {
+
+gg = ggplot(data, aes_string(x=a,y=b,fill = 'type' )) + #aes_string b/c input passed as string
+geom_boxplot(width = .4, lwd = .8, alpha = 1, colour = "black", outlier.colour = "#1F3552", outlier.shape = 16, notch = TRUE) + #For Violin plot, use geom_violin. 
+  scale_fill_brewer(palette = "Accent") + #notch gives clearer visuals ofIQR data spread
+  scale_x_discrete(name = "Gene type") +
+  scale_y_continuous(name = "Log2 RPKM",
+                     breaks = seq(0,10.7,3),
+                     limits = c(0,10.7)) +
+  ggtitle("Boxplot of RPKM values per gene type") +
+  theme_classic()  +
+  #Titles and axis ----------------------------------------------------------------------------------------------
+ # labs(title="Boxplot of RPKM values per gene type", y = "Log2 RPKM", x = "gene type") +
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+ 
+return(gg)
+}
+#Function ---------------------------------------------------------------------------------------------
+
+
+plot = makeboxplot(bpRNA,'type','e14m')
+plot
+#plot2 = makeboxplot(bpRNA,'type','e17m')
+#plot2
+```
+
+
+Example of a violin plot
+
+```{r, echo = FALSE,message = F, warning = F}
+data_summary <- function(x) {
+   m <- mean(x)
+   ymin <- m-sd(x)
+   ymax <- m+sd(x)
+   return(c(y=m,ymin=ymin,ymax=ymax))
+}
+
+
+#Function ------------------------------------------------------------------------------------------
+makeboxplot = function(data,a,b) {
+
+
+gg = ggplot(data, aes_string(x=a,y=b,fill = 'type' )) + #aes_string b/c input passed as string
+geom_violin(width = .7, lwd = .8, alpha = 1, colour = "black") +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set3") +
+  scale_x_discrete(name = "Gene type") +
+  scale_y_continuous(name = "Log2 RPKM",
+                     breaks = seq(0,10.7,3),
+                     limits = c(0,10.7)) +
+  ggtitle("Violin plot of RPKM values per gene type") +
+  theme_classic()  +
+  #Add Summary Statistics -------------------------------------------------------------------------------------
+ stat_summary(fun.data=data_summary) +
+  #Titles and axis ---------------------------------------------------------------------------------------------
+  theme(plot.title=element_text(size=16, 
+                                    face="bold", 
+                                    family= "sans", #arial
+                                    color="black",
+                                    hjust=.5,
+                                    lineheight= 1.4),  # title
+            axis.title.x=element_text(vjust= 0, face = "bold", size=11), # X axis title  
+            axis.title.y=element_text(size=11, face = "bold"),  # Y axis title
+            axis.text.x=element_text(size=9, angle = 0 ,vjust=.4),  # X axis text
+            axis.text.y=element_text(size=9)) 
+ 
+
+
+return(gg)
+}
+#Function ---------------------------------------------------------------------------------------------
+
+#bpRNA
+plot = makeboxplot(bpRNA,'type','e14m')
+#plot
+plot2 = makeboxplot(bpRNA,'type','e17m')
+plot2
+
+```
+
+
+Dendrogram / Heatmap
+
+
+For the purpose of clustering based on type, I removed genes that are classified as multiple types. For simplicity, I only look at the 5 genes with the highest sampled counts.
+
+Calculate Variance of Each Row, and apply the quantile function on that to get rows with highest variance
+
+```{r,message = F, warning = F}
+
+genders.log.typ = genders.log
+genders.log.typ = genders.log.typ[- grep(",|transcribed|unprocessed", genders.log.typ$type),]
+genders.log.typ = filter(genders.log.typ, grepl("antisense|miRNA|processed_pseudogene|lincRNA",type))
+#create row names to allow for matching later
+rownames(genders.log.typ) = 1:nrow(genders.log.typ) 
+#create a dataframe with just numerical values to convert to matrix
+numtyp = genders.log.typ[,6:20]
+numtyp = as.matrix(numtyp) #Generate a matrix of only the RPKM numerical counts.
+
+#Varlist is a list of the variance of each row.
+Varlist = apply(numtyp,MARGIN = 1,var)  #MARGIN = 1 applies the var func over rows, 2 for columns.
+Varlist = as.matrix(Varlist)
+qt = quantile(Varlist, probs = c( .20,.95)) #only look at genes with top 1% of variance. (first option does not matter in this case)
+#We generate a True/False vector (whether the row's variance is > top 1% of variance) for every row of numtyp. 
+rows = apply(numtyp, 1, function(x) any (var(x) > qt[2])) 
+#we filter our dataframe to only the rows that match with true
+genders.log.typ = genders.log.typ[rows,]
+
+genders.log.type = genders.log.typ[FALSE,] #create an empty dataframe using old column names
+list = c("antisense","miRNA","lincRNA","processed_pseudogene")
+
+#This for loop adds random samples of certain gene type to genders.log.type
+for (i in list){
+temp = subset(genders.log.typ,type == i)  
+genders.log.type = rbind(genders.log.type,temp[sample(10), ])
+}
+
+#These commands are for generating our dendogram.
+genders.log.type = as.data.frame(genders.log.type)
+genders.log.type$type =as.factor(genders.log.type$type) #need to make into factor type
+#add row names to be depicted on dendogram by default.
+rownames(genders.log.type) = genders.log.type$gid
+
+```
+
+```{r, message = F, warning = F}
+
+numgenders = genders.log.type[,6:20]
+
+#method = manhattan, euclidian, maximum, .... 
+d_genders <- dist(numgenders,method = "manhattan")
+#method = "average", "single"
+hc_genders <- hclust(d_genders, method = "average")
+types <- rev(levels(genders.log.type[,4]))
+
+#hang = -1 specifies leaves should be at same length
+dendrogram = as.dendrogram(hc_genders,hang = -1)#set hang to other number to have diff length
+
+#this is if you would like to color the branches as well
+#dendrogram = color_branches(col = plasma, dendrogram,k=6)
+
+labels_colors(dendrogram) <-
+   #select 4 colors in color brewer
+   brewer.pal(4,"Set1")[sort_levels_values(
+      as.numeric(genders.log.type[,4])[order.dendrogram(dendrogram)]
+   )]
+
+#changes the leafnames
+#labels(dendrogram) = paste(as.character(genders.log.type[,4])[order.dendrogram(dendrogram)],
+#                           "(",labels(dendrogram),")", 
+#                           sep = "")
+
+
+dendrogram <- assign_values_to_leaves_nodePar(dendrogram, 0.5, "lab.cex")
+dendrogram = set(dendrogram,"labels_cex",0.4)
+
+plot(dendrogram,
+     main = "Clustering Gene Expression Data Based on Type",
+     horiz = TRUE, nodePar = list(cex = .003))
+legend(cex = .4,"bottomleft",legend = types,fill = brewer.pal(5,"Set1"))
+
+```
+
+
+```{r}
+#assign group colors based on gender.
+colnames(numgenders)
+
+color.map = function(gender) { if (grepl('f',gender)) "skyblue2" else "green3" }
+groupgenders = unlist(lapply(colnames(numgenders),color.map))
+
+
+heatmap.2(
+ main = "Heatmap of RPKM values by gene",
+ as.matrix(numgenders), 
+ srtCol = 40, #column name angle
+ Rowv = dendrogram,
+ #dendrogram = "row", #hides the column dendogram.
+ cexRow = .7, #sets font size for row         
+ #Colv = NA, #uncomment this if you don't want columns to be sorted.
+ ColSideCol = groupgenders,
+ scale = "none", #turns off default row normalization
+ trace="none", #gets rid of green lines in heatmap         
+ margins =c(3,12),   #figure margins
+ key.xlab = "RPKM",
+ denscol = "grey",
+ density.info = "none", #gets rid of histogram drawn in scale
+ RowSideColors = rev(labels_colors(dendrogram)), # to add nice colored strips  
+ col=rev(heat.colors(16)) #16 is the number of different colors in our spectrum
+ )
+
+ legend(cex = .45, xpd = TRUE, x = .70, y = 1.00 ,legend = c("male","female"), c("skyblue2","green3"))
+ #need to add legend for column colors 
+legend(cex = .45, xpd = TRUE, x = .80, y = .99 ,legend = types, brewer.pal(5,"Set1"))
+
+ 
+```
+
+Make a heatmap using noramlized z scores (two sided) (stowkow site)
+
+Additional Sources
+
+For modifying legend font/positioning : 
+http://www.cookbook-r.com/Graphs/Legends_(ggplot2)/
+
+Pretty Heatmap
+http://wiki.bits.vib.be/index.php/Use_pheatmap_to_draw_heat_maps_in_R
+
+Dendogram
+https://plot.ly/ggplot2/ggdendro-dendrograms/
+https://stackoverflow.com/questions/43794870/plotting-a-clustered-heatmap-with-dendrograms-using-rs-plotly
+http://slowkow.com/notes/heatmap-tutorial/
+https://www2.warwick.ac.uk/fac/sci/moac/people/students/peter_cock/r/heatmap/
+http://www.molecularecologist.com/2013/08/making-heatmaps-with-r-for-microbiome-analysis/
